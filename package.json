@@ -1,0 +1,49 @@
+{
+  "name": "@studiolayer/client",
+  "version": "0.1.0",
+  "description": "Typed client for the StudioLayer content API. Read and write project node datasets from any website or app, headless-CMS style and beyond.",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "studiolayer",
+    "headless-cms",
+    "content-api",
+    "cms",
+    "datasets",
+    "client",
+    "sdk"
+  ],
+  "author": "StudioLayer",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2"
+  }
+}
