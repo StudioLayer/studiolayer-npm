@@ -1,6 +1,6 @@
 {
   "name": "@studiolayer/client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Typed client for the StudioLayer content API. Read and write project node datasets from any website or app, headless-CMS style and beyond.",
   "type": "module",
   "publishConfig": {
