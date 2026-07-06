@@ -1,6 +1,6 @@
 {
   "name": "@studiolayer/client",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Typed client for the StudioLayer content API. Read and write project node datasets from any website or app, headless-CMS style and beyond.",
   "type": "module",
   "publishConfig": {
@@ -39,6 +39,14 @@
   ],
   "author": "StudioLayer",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/StudioLayer/studiolayer-npm.git"
+  },
+  "bugs": {
+    "url": "https://github.com/StudioLayer/studiolayer-npm/issues"
+  },
+  "homepage": "https://github.com/StudioLayer/studiolayer-npm#readme",
   "engines": {
     "node": ">=18"
   },
