@@ -24,7 +24,7 @@ export interface CacheStore {
 export interface CacheOptions {
   /** Master switch. Default `true`. */
   enabled?: boolean
-  /** Time-to-live for cached reads, in ms. Default `60000`. `0` = never expires. */
+  /** Time-to-live for cached reads, in ms. Default `14400000` (4 hours). `0` = never expires. */
   ttl?: number
   /** Soft cap on entries; oldest are evicted first. Default `500`. */
   maxEntries?: number
@@ -77,7 +77,7 @@ export class ContentCache {
 
   constructor(opts: CacheOptions = {}) {
     this.enabled = opts.enabled ?? true
-    this.ttl = opts.ttl ?? 60_000
+    this.ttl = opts.ttl ?? 14_400_000
     this.store = opts.store ?? new MemoryCacheStore(opts.maxEntries ?? 500)
   }
 

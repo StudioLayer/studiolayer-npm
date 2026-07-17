@@ -104,7 +104,7 @@ dataset's cached reads (and all query results, since a query may aggregate it).
 ```ts
 const studio = createClient({
   apiKey, baseUrl,
-  cache: { ttl: 30_000, maxEntries: 1000 }, // defaults: ttl 60s, maxEntries 500
+  cache: { ttl: 30_000, maxEntries: 1000 }, // defaults: ttl 4h, maxEntries 500
 })
 
 // Disable entirely:
