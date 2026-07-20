@@ -101,17 +101,66 @@ Reads (`schema`, `listRecords`, `getRecord`, `query`) are cached in memory.
 Writes (`createRecord`, `updateRecord`) automatically invalidate the affected
 dataset's cached reads (and all query results, since a query may aggregate it).
 
+Two things bound how stale a page can get:
+
+- **TTL - 1 hour by default.** The worst case. Nothing is ever older than this.
+- **Content stamp - checked every 30 seconds by default.** The client polls
+  `GET /api/content/version` at most once per window (one cheap request, no
+  matter how many reads) and drops its whole cache the moment the stamp moves.
+  The stamp changes on every content edit in the studio, and when an editor
+  hits **Publish** on a surface.
+
+So in practice edits land within seconds; the hour is only the guarantee you can
+give a client ("changes are live within an hour at the very latest").
+
 ```ts
 const studio = createClient({
   apiKey, baseUrl,
-  cache: { ttl: 30_000, maxEntries: 1000 }, // defaults: ttl 4h, maxEntries 500
+  // defaults: ttl 1h, revalidate 30s, maxEntries 500
+  cache: { ttl: 3_600_000, revalidate: 30_000, maxEntries: 1000 },
 })
 
-// Disable entirely:
+// Pure TTL, never poll the stamp:
+createClient({ apiKey, baseUrl, cache: { revalidate: false } })
+
+// Disable caching entirely:
 createClient({ apiKey, baseUrl, cache: false })
 
-// Bypass the cache for a single call:
+// Bypass the cache for a single call (the fresh value still refreshes it):
 await studio.listRecords('blog', 'posts', { cache: false })
+```
+
+### Preview requests
+
+When the studio loads your site inside a surface preview it appends
+`?sl-preview=…` to the URL. Pass the request through `forRequest()` and those
+loads skip the cache completely, so an editor always sees their change
+immediately:
+
+```ts
+// Next.js app router
+export default async function Page({ searchParams }) {
+  const studioForThisRequest = studio.forRequest(await searchParams)
+  const posts = await studioForThisRequest.dataset('blog', 'posts').list()
+}
+
+// Anything with a Request object
+const posts = await studio.forRequest(request).dataset('blog', 'posts').list()
+```
+
+`forRequest()` accepts a `Request`, a URL string or `URL`, `URLSearchParams`, or
+a plain searchParams object, and returns this same client unchanged when the
+marker is absent - so it is safe to call on every request. Preview reads share
+the normal cache and refresh it, they do not maintain a second copy.
+
+One caveat: this only bypasses **this client's** cache. If your page also sits
+behind a CDN or a framework data cache, that layer needs the same treatment or
+the editor still sees a stale page. In Next.js:
+
+```ts
+import { isPreviewRequest } from '@studiolayer/client'
+
+export const dynamic = 'force-dynamic' // or, per fetch: cache: 'no-store'
 ```
 
 ### Clearing the cache
@@ -139,6 +188,8 @@ implementing `CacheStore` and passing it as `cache.store`.
 | `query<V>(slug, opts?)` | Run a saved query. |
 | `dataset<T>(node, dataset)` | Fluent handle: `.list() .get() .create() .update() .clearCache()`. |
 | `clearCache(scope?)` | Clear all, one node, or one dataset. |
+| `forRequest(req)` | Cache-bypassing view of this client for studio preview requests. |
+| `isPreview` | Whether this client came from a preview request. |
 
 `opts` is `{ cache?: boolean }`. All read methods accept a row type parameter
 `<T>` for `record.data`.

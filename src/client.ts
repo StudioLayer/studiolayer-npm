@@ -1,6 +1,14 @@
 import { ContentCache, type CacheOptions } from './cache'
 import { StudioLayerError } from './errors'
 import type { ContentRecord, ContentSchema, QueryResult, SchemaNode } from './types'
+import { VersionGate } from './version'
+
+/**
+ * Query parameter the StudioLayer studio appends when it loads your site in a
+ * surface preview. Its presence means "an editor is looking at this right now",
+ * which is exactly when caching must get out of the way - see `forRequest`.
+ */
+export const PREVIEW_PARAM = 'sl-preview'
 
 /** Hosted StudioLayer platform. Used when no `baseUrl` is provided. */
 export const DEFAULT_BASE_URL = 'https://app.studiolayer.io'
@@ -23,6 +31,12 @@ export interface StudioLayerClientOptions {
   fetch?: typeof fetch
   /** Extra headers merged into every request. */
   headers?: Record<string, string>
+  /**
+   * Force preview behaviour: every read bypasses the cache and refreshes it.
+   * Usually you do not set this by hand - use `client.forRequest(req)`, which
+   * turns it on only for requests that carry the studio's preview marker.
+   */
+  preview?: boolean
 }
 
 /** Per-call read options. */
@@ -48,7 +62,11 @@ export class StudioLayerClient {
   private readonly baseUrl: string
   private readonly fetchImpl: typeof fetch
   private readonly headers: Record<string, string>
-  private readonly cache: ContentCache
+  /** Not readonly: `forRequest` hands its clone the SAME cache instance. */
+  private cache: ContentCache
+  private versionGate: VersionGate
+  /** `false` on a preview-scoped clone, so reads bypass the cache by default. */
+  private readDefault: boolean
 
   constructor(options: StudioLayerClientOptions) {
     if (!options.apiKey) throw new Error('StudioLayerClient: `apiKey` is required')
@@ -61,13 +79,69 @@ export class StudioLayerClient {
     }
     this.fetchImpl = resolvedFetch.bind(globalThis)
     this.headers = options.headers ?? {}
+    this.readDefault = options.preview !== true
 
     const cacheOpt = options.cache
-    this.cache = new ContentCache(
-      cacheOpt === false ? { enabled: false }
+    const cacheOptions: CacheOptions
+      = cacheOpt === false ? { enabled: false }
         : cacheOpt === true || cacheOpt === undefined ? {}
-          : cacheOpt,
+          : cacheOpt
+    this.cache = new ContentCache(cacheOptions)
+
+    const revalidate = cacheOptions.enabled === false || cacheOptions.revalidate === false
+      ? 0
+      : cacheOptions.revalidate ?? 30_000
+    this.versionGate = new VersionGate(
+      async () => (await this.request<{ version: string }>('GET', '/version')).version,
+      revalidate,
+      () => this.cache.clear(),
     )
+  }
+
+  // ── Preview scoping ─────────────────────────────────────────────────────────
+
+  /**
+   * A per-request view of this client that skips the cache when the request
+   * comes from a StudioLayer surface preview, and behaves exactly like this
+   * client otherwise. Reads still refresh the shared cache, so an editor
+   * refreshing the preview also warms what real visitors get.
+   *
+   * Accepts whatever your framework hands you: a `Request`, a URL string or
+   * `URL`, `URLSearchParams`, or a plain searchParams object.
+   *
+   * ```ts
+   * // Next.js app router
+   * export default async function Page({ searchParams }) {
+   *   const posts = await studio.forRequest(await searchParams).dataset('blog', 'posts').list()
+   * }
+   * ```
+   *
+   * Note this only bypasses the SDK's own cache. If the page itself sits behind
+   * a CDN or framework data cache, that layer needs the same treatment (e.g.
+   * `cache: 'no-store'` when the preview marker is present) or the editor keeps
+   * seeing a stale page no matter what this client returns.
+   */
+  forRequest(input: PreviewInput): StudioLayerClient {
+    if (!this.readDefault) return this // already a preview client
+    if (!isPreviewRequest(input)) return this
+
+    const clone = new StudioLayerClient({
+      apiKey: this.apiKey,
+      baseUrl: this.baseUrl,
+      fetch: this.fetchImpl,
+      headers: this.headers,
+      preview: true,
+    })
+    // Share the cache and the version gate: the preview must invalidate what
+    // the public site reads, not maintain a second universe of its own.
+    clone.cache = this.cache
+    clone.versionGate = this.versionGate
+    return clone
+  }
+
+  /** Whether this client bypasses the cache (i.e. came from a preview request). */
+  get isPreview(): boolean {
+    return !this.readDefault
   }
 
   // ── Introspection ─────────────────────────────────────────────────────────
@@ -204,14 +278,17 @@ export class StudioLayerClient {
   // ── Transport ───────────────────────────────────────────────────────────────
 
   private async cachedGet<T>(cacheKey: string, path: string, opts?: ReadOptions): Promise<T> {
-    const useCache = opts?.cache !== false
-    const now = Date.now()
+    const useCache = opts?.cache ?? this.readDefault
     if (useCache) {
-      const hit = this.cache.get<T>(cacheKey, now)
+      // Cheap, throttled: at most one stamp check per `revalidate` window.
+      await this.versionGate.check(Date.now())
+      const hit = this.cache.get<T>(cacheKey, Date.now())
       if (hit !== undefined) return hit
     }
     const value = await this.request<T>('GET', path)
-    if (useCache) this.cache.set(cacheKey, value, now)
+    // Written back even when the cache was bypassed: leaving a stale entry in
+    // place would serve it to the very next default read.
+    this.cache.set(cacheKey, value, Date.now())
     return value
   }
 
@@ -273,6 +350,38 @@ export class DatasetHandle<T = Record<string, unknown>> {
   clearCache(): void {
     this.client.clearCache({ node: this.nodeSlug, dataset: this.datasetSlug })
   }
+}
+
+// ── Preview detection ─────────────────────────────────────────────────────────
+
+/** Anything a framework might hand you that could carry the preview marker. */
+export type PreviewInput
+  = | string
+    | URL
+    | URLSearchParams
+    | { url: string }
+    | Record<string, string | string[] | undefined>
+    | null
+    | undefined
+
+/**
+ * True when the request was opened from a StudioLayer surface preview, i.e. it
+ * carries the `sl-preview` query parameter the studio appends to the iframe URL.
+ */
+export function isPreviewRequest(input: PreviewInput): boolean {
+  if (!input) return false
+
+  if (typeof input === 'string') {
+    // Either a full URL or a bare query string ("?a=1" / "a=1").
+    const query = input.includes('?') ? input.slice(input.indexOf('?') + 1) : input
+    return new URLSearchParams(query).has(PREVIEW_PARAM)
+  }
+  if (input instanceof URLSearchParams) return input.has(PREVIEW_PARAM)
+  if (input instanceof URL) return input.searchParams.has(PREVIEW_PARAM)
+  if (typeof (input as { url?: unknown }).url === 'string') {
+    return isPreviewRequest((input as { url: string }).url)
+  }
+  return Object.prototype.hasOwnProperty.call(input, PREVIEW_PARAM)
 }
 
 // ── Cache-key + path helpers ──────────────────────────────────────────────────

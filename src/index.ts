@@ -1,5 +1,5 @@
-export { StudioLayerClient, DatasetHandle, DEFAULT_BASE_URL } from './client'
-export type { StudioLayerClientOptions, ReadOptions } from './client'
+export { StudioLayerClient, DatasetHandle, DEFAULT_BASE_URL, PREVIEW_PARAM, isPreviewRequest } from './client'
+export type { StudioLayerClientOptions, ReadOptions, PreviewInput } from './client'
 export { StudioLayerError } from './errors'
 export { ContentCache, MemoryCacheStore } from './cache'
 export type { CacheOptions, CacheStore, CacheEntry } from './cache'
