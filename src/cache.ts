@@ -55,11 +55,16 @@ export interface CacheOptions {
    */
   ttl?: number
   /**
-   * Minimum ms between two project-stamp checks. Default `5000` (5 seconds). The
-   * client checks the studio's cheap project stamp at most this often (one tiny
-   * request regardless of read volume); when it moves, entries revalidate with
-   * `If-None-Match` on their next read. `false` disables the check and leaves you
-   * with pure TTL expiry.
+   * Minimum ms between two project-stamp checks. Default `60000` (1 minute) -
+   * this is the freshness window for PUBLIC visitors (an edit is picked up on
+   * the next check after it lands); an editor viewing a surface preview bypasses
+   * the cache entirely and always sees changes instantly.
+   *
+   * The check fires only on a read and is throttled, so a quiet site barely
+   * checks at all; the interval only caps the busy case. Each check costs the
+   * studio a small API-key lookup, so raise it (a few minutes) if you run many
+   * frontends; lower it for a tighter public window. `false` disables checking
+   * and leaves you with pure TTL expiry.
    */
   revalidate?: number | false
   /** Soft cap on entries; oldest are evicted first. Default `500`. */

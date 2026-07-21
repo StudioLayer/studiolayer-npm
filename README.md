@@ -105,7 +105,7 @@ How it stays fresh, cheaply:
 
 - The studio publishes a tiny per-project **stamp** (`GET /api/content/version`)
   that changes on every content edit. The client checks it at most once every
-  few seconds (one small request, no matter how many reads).
+  minute (one small request, no matter how many reads).
 - While the stamp is unchanged, reads are served straight from cache - zero
   network.
 - When the stamp moves, the affected read is **revalidated** with its `ETag`
@@ -115,7 +115,9 @@ How it stays fresh, cheaply:
 
 What this buys you:
 
-- **Edits go live on their own, within a couple of seconds** - no button, no
+- **Edits go live on their own, within about a minute** for public visitors
+  (instantly in a surface preview) - a safe promise to a client is "live within
+  10 minutes". No button, no
   webhook, no cache to clear.
 - **Resilient:** if the studio is unreachable, the last good value keeps being
   served (a definitive `404`/`403`, e.g. a deleted record, is surfaced as an
@@ -130,8 +132,8 @@ Every knob is overridable:
 ```ts
 const studio = createClient({
   apiKey, baseUrl,
-  // defaults: ttl 7d (outage window), revalidate 5s (stamp check), maxEntries 500
-  cache: { ttl: 604_800_000, revalidate: 5_000, maxEntries: 1000 },
+  // defaults: ttl 7d (outage window), revalidate 60s (stamp check), maxEntries 500
+  cache: { ttl: 604_800_000, revalidate: 60_000, maxEntries: 1000 },
 })
 
 // Survive an outage of any length - serve last-known until the studio returns:

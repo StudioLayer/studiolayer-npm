@@ -90,7 +90,7 @@ export class StudioLayerClient {
 
     const revalidate = cacheOptions.enabled === false || cacheOptions.revalidate === false
       ? 0
-      : cacheOptions.revalidate ?? 5_000
+      : cacheOptions.revalidate ?? 60_000
     this.versionTracker = new VersionTracker(
       async () => (await this.request<{ version: string }>('GET', '/version')).version,
       revalidate,
