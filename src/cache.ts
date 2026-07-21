@@ -40,11 +40,18 @@ export interface CacheOptions {
   /** Master switch. Default `true`. */
   enabled?: boolean
   /**
-   * Time-to-live for cached reads, in ms. Default `3600000` (1 hour). This is
-   * only a safety backstop - the cache normally stays correct through
-   * revalidation (see `revalidate`), so the TTL just bounds staleness if the
-   * stamp check is turned off or the studio is unreachable for a long time.
-   * `0` = never expire.
+   * How long a cached entry survives, in ms. Default `604800000` (7 days).
+   *
+   * This is NOT how long until content refreshes - revalidation keeps entries
+   * current within `revalidate` (seconds) whenever the studio is reachable. The
+   * TTL is really the outage window: how long the site keeps serving the
+   * last-known content while the studio is unreachable, before an entry is
+   * dropped and a read must hit the network again. A generous default so a
+   * studio outage degrades to "slightly stale" rather than "site errors".
+   *
+   * The one case where it bounds staleness directly is when revalidation is off
+   * (`revalidate: false`) or the server has no `/version` endpoint: then content
+   * can be up to `ttl` old. `0` = never expire.
    */
   ttl?: number
   /**
@@ -107,7 +114,7 @@ export class ContentCache {
 
   constructor(opts: CacheOptions = {}) {
     this.enabled = opts.enabled ?? true
-    this.ttl = opts.ttl ?? 3_600_000
+    this.ttl = opts.ttl ?? 604_800_000
     this.store = opts.store ?? new MemoryCacheStore(opts.maxEntries ?? 500)
   }
 

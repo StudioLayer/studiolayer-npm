@@ -120,15 +120,22 @@ What this buys you:
 - **Resilient:** if the studio is unreachable, the last good value keeps being
   served (a definitive `404`/`403`, e.g. a deleted record, is surfaced as an
   error rather than masked).
-- The **TTL (1 hour default)** is just a backstop for when revalidation is
-  turned off or the studio is down for a long time.
+- The **TTL (7 days default)** is the outage window, not the refresh interval:
+  how long the site keeps serving the last-known content while the studio is
+  unreachable. An entry that keeps revalidating stays alive, so in practice an
+  entry only expires ~`ttl` after the studio goes down.
+
+Every knob is overridable:
 
 ```ts
 const studio = createClient({
   apiKey, baseUrl,
-  // defaults: ttl 1h (backstop), revalidate 5s (stamp check), maxEntries 500
-  cache: { ttl: 3_600_000, revalidate: 5_000, maxEntries: 1000 },
+  // defaults: ttl 7d (outage window), revalidate 5s (stamp check), maxEntries 500
+  cache: { ttl: 604_800_000, revalidate: 5_000, maxEntries: 1000 },
 })
+
+// Survive an outage of any length - serve last-known until the studio returns:
+createClient({ apiKey, baseUrl, cache: { ttl: 0 } })
 
 // Pure TTL, never check the stamp (content can be up to `ttl` stale):
 createClient({ apiKey, baseUrl, cache: { revalidate: false } })
