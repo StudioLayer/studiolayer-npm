@@ -1,44 +1,48 @@
 /**
- * Cross-process cache invalidation.
+ * Project-stamp tracker: the cheap gate in front of conditional revalidation.
  *
- * The cache lives in YOUR process, so StudioLayer cannot push an invalidation
- * into it: a serverless instance, a long-running Node server and a browser tab
- * each hold their own copy. Instead the studio publishes a stamp per project at
- * `GET /api/content/version` that changes on every content edit (and when
- * someone hits "Publish" in the studio). This gate polls that stamp - by default
- * at most once every 30 seconds, regardless of how many reads happen - and
- * flushes the whole cache when it moves.
+ * The cache lives in YOUR process, so the studio cannot push an invalidation
+ * into it. Instead it publishes a stamp per project at `GET /api/content/version`
+ * that changes on every content edit. This tracker fetches that stamp at most
+ * once per interval (one tiny request regardless of read volume) and exposes the
+ * latest value it has seen.
  *
- * The result: the TTL is the worst case ("live within an hour"), the stamp is
- * the normal case ("live within seconds"), and neither needs any wiring on the
- * consuming site.
+ * The client uses it as a gate: while the stamp is unchanged, cached entries are
+ * served with no network at all; when it moves, entries revalidate individually
+ * with `If-None-Match` (a `304` keeps the cached value, a `200` replaces it). If
+ * the stamp check itself fails - studio down, network blip - the last known
+ * stamp stands, so the cache keeps serving instead of hammering a dead endpoint.
  */
 
 export type VersionProbe = () => Promise<string>
 
-export class VersionGate {
+export class VersionTracker {
     private lastChecked = 0
-    private lastVersion: string | null = null
+    private version: string | null = null
     private inFlight: Promise<void> | null = null
     /** Set when the server has no version route, so we stop asking. */
     private unsupported = false
 
     constructor(
         private readonly probe: VersionProbe,
-        /** Minimum ms between two probes. `0` disables the gate entirely. */
+        /** Minimum ms between two probes. `0` disables checking entirely. */
         private readonly interval: number,
-        private readonly onChange: () => void,
     ) {}
 
+    /** The most recent stamp seen, or `null` before the first successful probe. */
+    current(): string | null {
+        return this.version
+    }
+
     /**
-     * Probe if we are due. Resolves once the answer is in, so the read that
-     * triggered it never serves a value the stamp just invalidated. Costs one
-     * cheap request per interval, not per read.
+     * Refresh the stamp if we are due. Resolves once the answer is in, so the
+     * read that triggered it sees an up-to-date stamp. A failed probe leaves the
+     * last known stamp in place (serve-from-cache rather than thrash).
      */
-    async check(now: number): Promise<void> {
+    async refresh(now: number): Promise<void> {
         if (this.interval <= 0 || this.unsupported) return
         if (this.inFlight) return this.inFlight
-        if (now - this.lastChecked < this.interval) return
+        if (this.version !== null && now - this.lastChecked < this.interval) return
 
         this.lastChecked = now
         this.inFlight = this.run()
@@ -51,21 +55,14 @@ export class VersionGate {
     }
 
     private async run(): Promise<void> {
-        let version: string
         try {
-            version = await this.probe()
+            this.version = await this.probe()
         }
         catch (err) {
             // A server that predates the version route will never answer; stop
-            // polling it. Any other failure (network blip, 500) is transient:
-            // keep the cached data and try again next interval.
+            // asking. Any other failure is transient - keep the last stamp so the
+            // cache keeps serving, and try again next interval.
             if ((err as { status?: number })?.status === 404) this.unsupported = true
-            return
         }
-
-        // First successful probe only establishes the baseline - flushing then
-        // would throw away a perfectly warm cache on every cold start.
-        if (this.lastVersion !== null && this.lastVersion !== version) this.onChange()
-        this.lastVersion = version
     }
 }

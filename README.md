@@ -97,38 +97,52 @@ if (result.shape === 'collection') {
 
 ## Caching
 
-Reads (`schema`, `listRecords`, `getRecord`, `query`) are cached in memory.
-Writes (`createRecord`, `updateRecord`) automatically invalidate the affected
-dataset's cached reads (and all query results, since a query may aggregate it).
+Reads (`schema`, `listRecords`, `getRecord`, `query`) are cached in memory and
+kept fresh by **conditional revalidation** - the site stays in sync with the
+studio without you doing anything, and without a "publish" step.
 
-Two things bound how stale a page can get:
+How it stays fresh, cheaply:
 
-- **TTL - 1 hour by default.** The worst case. Nothing is ever older than this.
-- **Content stamp - checked every 30 seconds by default.** The client polls
-  `GET /api/content/version` at most once per window (one cheap request, no
-  matter how many reads) and drops its whole cache the moment the stamp moves.
-  The stamp changes on every content edit in the studio, and when an editor
-  hits **Publish** on a surface.
+- The studio publishes a tiny per-project **stamp** (`GET /api/content/version`)
+  that changes on every content edit. The client checks it at most once every
+  few seconds (one small request, no matter how many reads).
+- While the stamp is unchanged, reads are served straight from cache - zero
+  network.
+- When the stamp moves, the affected read is **revalidated** with its `ETag`
+  (`If-None-Match`): the studio answers `304 Not Modified` (keep the cached
+  value, no transfer) or `200` with the new content. So a change to one dataset
+  only refetches that dataset; everything else stays cached on a `304`.
 
-So in practice edits land within seconds; the hour is only the guarantee you can
-give a client ("changes are live within an hour at the very latest").
+What this buys you:
+
+- **Edits go live on their own, within a couple of seconds** - no button, no
+  webhook, no cache to clear.
+- **Resilient:** if the studio is unreachable, the last good value keeps being
+  served (a definitive `404`/`403`, e.g. a deleted record, is surfaced as an
+  error rather than masked).
+- The **TTL (1 hour default)** is just a backstop for when revalidation is
+  turned off or the studio is down for a long time.
 
 ```ts
 const studio = createClient({
   apiKey, baseUrl,
-  // defaults: ttl 1h, revalidate 30s, maxEntries 500
-  cache: { ttl: 3_600_000, revalidate: 30_000, maxEntries: 1000 },
+  // defaults: ttl 1h (backstop), revalidate 5s (stamp check), maxEntries 500
+  cache: { ttl: 3_600_000, revalidate: 5_000, maxEntries: 1000 },
 })
 
-// Pure TTL, never poll the stamp:
+// Pure TTL, never check the stamp (content can be up to `ttl` stale):
 createClient({ apiKey, baseUrl, cache: { revalidate: false } })
 
-// Disable caching entirely:
+// Disable caching entirely (every read hits the studio live):
 createClient({ apiKey, baseUrl, cache: false })
 
 // Bypass the cache for a single call (the fresh value still refreshes it):
 await studio.listRecords('blog', 'posts', { cache: false })
 ```
+
+> Caching is safe to leave on everywhere, including local/dev frontends: because
+> every read revalidates against the stamp, a cached dev site is still always in
+> sync. There is no "dev bypasses, production caches" split to manage.
 
 ### Preview requests
 

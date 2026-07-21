@@ -1,12 +1,27 @@
 /**
  * Read caching for the content client. GET responses (schema, record lists,
- * single records, queries) are cached by request key; writes invalidate the
- * affected keys automatically. Swap in a custom `CacheStore` to share a cache
- * across client instances or to back it with something persistent.
+ * single records, queries) are cached by request key and kept fresh by
+ * conditional revalidation: each entry stores the studio's `ETag`, which the
+ * client sends back as `If-None-Match`. A cheap project-wide stamp gates whether
+ * a revalidation is even attempted, so a stable site serves straight from cache.
+ *
+ * Swap in a custom `CacheStore` to share a cache across client instances or to
+ * back it with something persistent.
  */
 
 export interface CacheEntry {
   value: unknown
+  /**
+   * The studio's validator (`ETag`) for this value. Sent back as `If-None-Match`
+   * to revalidate: a `304` means the stored value is still current.
+   */
+  etag?: string
+  /**
+   * The project stamp this entry was last confirmed current against. When it
+   * equals the client's latest known stamp, the entry is served without any
+   * network call at all.
+   */
+  validatedVersion?: string
   /** Epoch ms when the entry expires. `0` means it never expires. */
   expiresAt: number
 }
@@ -25,18 +40,19 @@ export interface CacheOptions {
   /** Master switch. Default `true`. */
   enabled?: boolean
   /**
-   * Time-to-live for cached reads, in ms. Default `3600000` (1 hour), which is
-   * the worst case a content editor should ever wait. In practice changes land
-   * far sooner: `revalidate` polls the studio's content stamp and flushes the
-   * cache as soon as anything is edited or published. `0` = never expires
-   * (only sensible with `revalidate` left on).
+   * Time-to-live for cached reads, in ms. Default `3600000` (1 hour). This is
+   * only a safety backstop - the cache normally stays correct through
+   * revalidation (see `revalidate`), so the TTL just bounds staleness if the
+   * stamp check is turned off or the studio is unreachable for a long time.
+   * `0` = never expire.
    */
   ttl?: number
   /**
-   * How often, in ms, to check the studio's content stamp so edits appear
-   * without waiting out the TTL. Default `30000` (30 seconds); one cheap
-   * request per interval, no matter how many reads happen. `false` disables the
-   * check and leaves you with pure TTL expiry.
+   * Minimum ms between two project-stamp checks. Default `5000` (5 seconds). The
+   * client checks the studio's cheap project stamp at most this often (one tiny
+   * request regardless of read volume); when it moves, entries revalidate with
+   * `If-None-Match` on their next read. `false` disables the check and leaves you
+   * with pure TTL expiry.
    */
   revalidate?: number | false
   /** Soft cap on entries; oldest are evicted first. Default `500`. */
@@ -80,8 +96,9 @@ export class MemoryCacheStore implements CacheStore {
 }
 
 /**
- * Thin cache facade the client talks to. Owns TTL logic and prefix-based
- * invalidation so the client only deals in cache keys.
+ * Thin cache facade the client talks to. Owns TTL logic, conditional-revalidation
+ * bookkeeping (etag + validated stamp), and prefix invalidation, so the client
+ * only deals in cache keys.
  */
 export class ContentCache {
   readonly enabled: boolean
@@ -94,8 +111,12 @@ export class ContentCache {
     this.store = opts.store ?? new MemoryCacheStore(opts.maxEntries ?? 500)
   }
 
-  /** Return a fresh cached value for `key`, or `undefined` on miss/expiry. */
-  get<T>(key: string, now: number): T | undefined {
+  /**
+   * The live entry for `key`, or `undefined` on miss / TTL expiry. Returns the
+   * whole entry (value + etag + validated stamp) so the client can decide
+   * whether to serve it, revalidate it, or fall back to it on error.
+   */
+  peek(key: string, now: number): CacheEntry | undefined {
     if (!this.enabled) return undefined
     const entry = this.store.get(key)
     if (!entry) return undefined
@@ -103,12 +124,30 @@ export class ContentCache {
       this.store.delete(key)
       return undefined
     }
-    return entry.value as T
+    return entry
   }
 
-  set(key: string, value: unknown, now: number): void {
+  /** Store a freshly fetched value with its validator and the stamp it is current against. */
+  set(key: string, value: unknown, opts: { etag?: string, version?: string }, now: number): void {
     if (!this.enabled) return
-    this.store.set(key, { value, expiresAt: this.ttl === 0 ? 0 : now + this.ttl })
+    this.store.set(key, {
+      value,
+      etag: opts.etag,
+      validatedVersion: opts.version,
+      expiresAt: this.ttl === 0 ? 0 : now + this.ttl,
+    })
+  }
+
+  /**
+   * Record that an existing entry is still current as of `version` (after a
+   * `304`), refreshing its TTL without touching the value. No-op if it is gone.
+   */
+  confirm(key: string, version: string | undefined, now: number): void {
+    const entry = this.store.get(key)
+    if (!entry) return
+    entry.validatedVersion = version
+    entry.expiresAt = this.ttl === 0 ? 0 : now + this.ttl
+    this.store.set(key, entry)
   }
 
   /** Drop one exact key. */

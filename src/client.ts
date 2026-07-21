@@ -1,7 +1,7 @@
 import { ContentCache, type CacheOptions } from './cache'
 import { StudioLayerError } from './errors'
 import type { ContentRecord, ContentSchema, QueryResult, SchemaNode } from './types'
-import { VersionGate } from './version'
+import { VersionTracker } from './version'
 
 /**
  * Query parameter the StudioLayer studio appends when it loads your site in a
@@ -64,7 +64,7 @@ export class StudioLayerClient {
   private readonly headers: Record<string, string>
   /** Not readonly: `forRequest` hands its clone the SAME cache instance. */
   private cache: ContentCache
-  private versionGate: VersionGate
+  private versionTracker: VersionTracker
   /** `false` on a preview-scoped clone, so reads bypass the cache by default. */
   private readDefault: boolean
 
@@ -90,11 +90,10 @@ export class StudioLayerClient {
 
     const revalidate = cacheOptions.enabled === false || cacheOptions.revalidate === false
       ? 0
-      : cacheOptions.revalidate ?? 30_000
-    this.versionGate = new VersionGate(
+      : cacheOptions.revalidate ?? 5_000
+    this.versionTracker = new VersionTracker(
       async () => (await this.request<{ version: string }>('GET', '/version')).version,
       revalidate,
-      () => this.cache.clear(),
     )
   }
 
@@ -132,10 +131,10 @@ export class StudioLayerClient {
       headers: this.headers,
       preview: true,
     })
-    // Share the cache and the version gate: the preview must invalidate what
-    // the public site reads, not maintain a second universe of its own.
+    // Share the cache and the version tracker: the preview must refresh what the
+    // public site reads, not maintain a second universe of its own.
     clone.cache = this.cache
-    clone.versionGate = this.versionGate
+    clone.versionTracker = this.versionTracker
     return clone
   }
 
@@ -277,19 +276,88 @@ export class StudioLayerClient {
 
   // ── Transport ───────────────────────────────────────────────────────────────
 
+  /**
+   * The read path, with conditional revalidation.
+   *
+   * Steady state (project stamp unchanged since we last confirmed this entry):
+   * served straight from cache, zero network. After a content change the stamp
+   * moves, so the entry is revalidated once with `If-None-Match` - a `304` keeps
+   * the cached value, a `200` replaces it - and then it is fast again. If the
+   * studio is unreachable, the last good value is served rather than failing
+   * (unless it is a definitive 4xx like a deleted record).
+   */
   private async cachedGet<T>(cacheKey: string, path: string, opts?: ReadOptions): Promise<T> {
     const useCache = opts?.cache ?? this.readDefault
-    if (useCache) {
-      // Cheap, throttled: at most one stamp check per `revalidate` window.
-      await this.versionGate.check(Date.now())
-      const hit = this.cache.get<T>(cacheKey, Date.now())
-      if (hit !== undefined) return hit
+
+    // Preview / explicit bypass: always fetch fresh, but still refresh the shared
+    // cache so real visitors benefit from the warm entry.
+    if (!useCache) {
+      const res = await this.conditionalGet(path)
+      this.cache.set(cacheKey, res.value, { etag: res.etag, version: this.versionTracker.current() ?? undefined }, Date.now())
+      return res.value as T
     }
-    const value = await this.request<T>('GET', path)
-    // Written back even when the cache was bypassed: leaving a stale entry in
-    // place would serve it to the very next default read.
-    this.cache.set(cacheKey, value, Date.now())
-    return value
+
+    // Cheap, throttled: at most one tiny stamp request per `revalidate` window.
+    await this.versionTracker.refresh(Date.now())
+    const version = this.versionTracker.current() ?? undefined
+    const entry = this.cache.peek(cacheKey, Date.now())
+
+    if (entry) {
+      // Serve from cache when we cannot see a newer stamp (tracking off, first
+      // probe not in yet, or studio unreachable) or the stamp is unchanged since
+      // this entry was last confirmed.
+      if (version === undefined || entry.validatedVersion === version) {
+        return entry.value as T
+      }
+      // The stamp moved: revalidate just this entry against the studio.
+      try {
+        const res = await this.conditionalGet(path, entry.etag)
+        if (res.notModified) {
+          this.cache.confirm(cacheKey, version, Date.now())
+          return entry.value as T
+        }
+        this.cache.set(cacheKey, res.value, { etag: res.etag, version }, Date.now())
+        return res.value as T
+      }
+      catch (err) {
+        // Definitive answer (deleted/forbidden): drop the entry and surface it.
+        // Transient (studio down, 5xx, network): serve the last good value.
+        if (err instanceof StudioLayerError && err.status < 500) {
+          this.cache.delete(cacheKey)
+          throw err
+        }
+        return entry.value as T
+      }
+    }
+
+    // Cache miss: fetch fresh. Nothing to fall back to, so errors propagate.
+    const res = await this.conditionalGet(path)
+    this.cache.set(cacheKey, res.value, { etag: res.etag, version }, Date.now())
+    return res.value as T
+  }
+
+  /**
+   * A GET that understands conditional requests: sends `If-None-Match` when an
+   * etag is supplied, and reports a `304` as `notModified` rather than a value.
+   */
+  private async conditionalGet(
+    path: string,
+    ifNoneMatch?: string,
+  ): Promise<{ notModified: boolean, value?: unknown, etag?: string }> {
+    const res = await this.fetchImpl(`${this.baseUrl}/api/content${path}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        ...(ifNoneMatch ? { 'If-None-Match': ifNoneMatch } : {}),
+        ...this.headers,
+      },
+    })
+
+    if (res.status === 304) return { notModified: true, etag: res.headers.get('etag') ?? ifNoneMatch ?? undefined }
+    if (!res.ok) throw await this.toError(res)
+    const etag = res.headers.get('etag') ?? undefined
+    if (res.status === 204) return { notModified: false, value: undefined, etag }
+    return { notModified: false, value: await res.json(), etag }
   }
 
   private async request<T>(method: Method, path: string, body?: unknown): Promise<T> {
@@ -303,22 +371,24 @@ export class StudioLayerClient {
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
 
-    if (!res.ok) {
-      let message = res.statusText || `Request failed with status ${res.status}`
-      let parsed: unknown
-      try {
-        parsed = await res.json()
-        const m = parsed as { message?: unknown, statusMessage?: unknown }
-        if (typeof m?.message === 'string') message = m.message
-        else if (typeof m?.statusMessage === 'string') message = m.statusMessage
-      } catch {
-        /* non-JSON error body; keep the status text */
-      }
-      throw new StudioLayerError(message, res.status, parsed)
-    }
-
+    if (!res.ok) throw await this.toError(res)
     if (res.status === 204) return undefined as T
     return res.json() as Promise<T>
+  }
+
+  /** Parse a non-2xx response into a `StudioLayerError`, preferring its message. */
+  private async toError(res: Response): Promise<StudioLayerError> {
+    let message = res.statusText || `Request failed with status ${res.status}`
+    let parsed: unknown
+    try {
+      parsed = await res.json()
+      const m = parsed as { message?: unknown, statusMessage?: unknown }
+      if (typeof m?.message === 'string') message = m.message
+      else if (typeof m?.statusMessage === 'string') message = m.statusMessage
+    } catch {
+      /* non-JSON error body; keep the status text */
+    }
+    return new StudioLayerError(message, res.status, parsed)
   }
 }
 
