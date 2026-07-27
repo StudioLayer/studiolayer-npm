@@ -56,9 +56,31 @@ export interface SchemaNode {
   datasets: SchemaDataset[]
 }
 
+/**
+ * A language the project's dataset content is available in. Request a non-default
+ * locale on reads (client `locale` option or per-call `opts.locale`); untranslated
+ * fields fall back to the default locale automatically.
+ */
+export interface ContentLocale {
+  /** BCP-47 code, e.g. `en`, `nl`, `fr-BE`. */
+  code: string
+  label: string
+  /** The language records are authored in and the fallback for untranslated fields. */
+  isDefault: boolean
+  /**
+   * Served when a requested language matches no configured locale (e.g. a German
+   * visitor on a Dutch/English site). When none is marked, unmatched requests
+   * fall back to the default. The studio resolves this server-side; you never
+   * have to send it.
+   */
+  isFallback: boolean
+}
+
 /** Response of `GET /schema`: the full content shape this key can reach. */
 export interface ContentSchema {
   nodes: SchemaNode[]
+  /** The locales this project's content can be requested in (default first). */
+  locales: ContentLocale[]
 }
 
 /**

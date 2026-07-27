@@ -1,6 +1,6 @@
 import { ContentCache, type CacheOptions } from './cache'
 import { StudioLayerError } from './errors'
-import type { ContentRecord, ContentSchema, QueryResult, SchemaNode } from './types'
+import type { ContentLocale, ContentRecord, ContentSchema, QueryResult, SchemaNode } from './types'
 import { VersionTracker } from './version'
 
 /**
@@ -25,6 +25,13 @@ export interface StudioLayerClientOptions {
    * `https://app.studiolayer.io`; override it for a self-hosted instance.
    */
   baseUrl?: string
+  /**
+   * Default locale for reads, e.g. `nl` or `fr-BE`. When set, records are
+   * returned in that language, with untranslated fields falling back to the
+   * project default. Override per call with `opts.locale`. Omit for the default
+   * locale. Discover available locales with `client.locales()`.
+   */
+  locale?: string
   /** Read caching. Pass `false` to disable, or an options object to tune it. */
   cache?: boolean | CacheOptions
   /** Custom `fetch` implementation. Defaults to the global `fetch`. */
@@ -43,6 +50,12 @@ export interface StudioLayerClientOptions {
 export interface ReadOptions {
   /** Set `false` to bypass the cache for this call and always hit the network. */
   cache?: boolean
+  /**
+   * Locale for this read, overriding the client-level `locale`. Pass an empty
+   * string to force the project default even when a client locale is set.
+   * Untranslated fields fall back to the default locale.
+   */
+  locale?: string
 }
 
 type Method = 'GET' | 'POST' | 'PATCH'
@@ -67,6 +80,8 @@ export class StudioLayerClient {
   private versionTracker: VersionTracker
   /** `false` on a preview-scoped clone, so reads bypass the cache by default. */
   private readDefault: boolean
+  /** Client-level default locale for reads (undefined = project default). */
+  private readonly locale?: string
 
   constructor(options: StudioLayerClientOptions) {
     if (!options.apiKey) throw new Error('StudioLayerClient: `apiKey` is required')
@@ -79,6 +94,7 @@ export class StudioLayerClient {
     }
     this.fetchImpl = resolvedFetch.bind(globalThis)
     this.headers = options.headers ?? {}
+    this.locale = options.locale || undefined
     this.readDefault = options.preview !== true
 
     const cacheOpt = options.cache
@@ -129,6 +145,7 @@ export class StudioLayerClient {
       baseUrl: this.baseUrl,
       fetch: this.fetchImpl,
       headers: this.headers,
+      locale: this.locale,
       preview: true,
     })
     // Share the cache and the version tracker: the preview must refresh what the
@@ -155,6 +172,21 @@ export class StudioLayerClient {
     return (await this.schema(opts)).nodes
   }
 
+  /**
+   * The locales this project's content can be requested in (default first). Use
+   * a locale `code` as the client `locale` option or a per-call `opts.locale`.
+   */
+  async locales(opts?: ReadOptions): Promise<ContentLocale[]> {
+    const res = await this.cachedGet<{ locales: ContentLocale[] }>('locales', '/locales', opts)
+    return res.locales
+  }
+
+  /** Resolve the locale for a read: per-call override, else the client default. */
+  private resolveLocale(opts?: ReadOptions): string | undefined {
+    const l = opts && 'locale' in opts ? opts.locale : this.locale
+    return l || undefined
+  }
+
   // ── Records ───────────────────────────────────────────────────────────────
 
   /** List every record in a dataset (references inflated). Requires read scope. */
@@ -163,9 +195,10 @@ export class StudioLayerClient {
     datasetSlug: string,
     opts?: ReadOptions,
   ): Promise<ContentRecord<T>[]> {
+    const locale = this.resolveLocale(opts)
     const res = await this.cachedGet<{ records: ContentRecord<T>[] }>(
-      recordsKey(nodeSlug, datasetSlug),
-      datasetPath(nodeSlug, datasetSlug),
+      recordsKey(nodeSlug, datasetSlug, locale),
+      datasetPath(nodeSlug, datasetSlug) + localeQuery(locale),
       opts,
     )
     return res.records
@@ -178,9 +211,10 @@ export class StudioLayerClient {
     recordUid: string,
     opts?: ReadOptions,
   ): Promise<ContentRecord<T>> {
+    const locale = this.resolveLocale(opts)
     const res = await this.cachedGet<{ record: ContentRecord<T> }>(
-      recordKey(nodeSlug, datasetSlug, recordUid),
-      `${datasetPath(nodeSlug, datasetSlug)}/${encodeURIComponent(recordUid)}`,
+      recordKey(nodeSlug, datasetSlug, recordUid, locale),
+      `${datasetPath(nodeSlug, datasetSlug)}/${encodeURIComponent(recordUid)}${localeQuery(locale)}`,
       opts,
     )
     return res.record
@@ -267,9 +301,13 @@ export class StudioLayerClient {
     }
   }
 
-  /** Drop cached record reads for a dataset, plus all query results (which may aggregate it). */
+  /** Drop cached record reads for a dataset (every locale), plus all query
+   *  results (which may aggregate it). */
   private invalidateDataset(nodeSlug: string, datasetSlug: string): void {
+    // Default-locale list key + every `::<locale>` variant of it.
     this.cache.delete(recordsKey(nodeSlug, datasetSlug))
+    this.cache.deletePrefix(`${recordsKey(nodeSlug, datasetSlug)}::`)
+    // All single-record keys under the dataset (every uid, every locale).
     this.cache.deletePrefix(`${recordKey(nodeSlug, datasetSlug, '')}`)
     this.cache.deletePrefix('query:')
   }
@@ -460,10 +498,21 @@ function datasetPath(nodeSlug: string, datasetSlug: string): string {
   return `/nodes/${encodeURIComponent(nodeSlug)}/datasets/${encodeURIComponent(datasetSlug)}/records`
 }
 
-function recordsKey(nodeSlug: string, datasetSlug: string): string {
-  return `records:${nodeSlug}/${datasetSlug}`
+/** `?locale=xx` query suffix, or empty for the default locale. */
+function localeQuery(locale?: string): string {
+  return locale ? `?locale=${encodeURIComponent(locale)}` : ''
 }
 
-function recordKey(nodeSlug: string, datasetSlug: string, recordUid: string): string {
-  return `record:${nodeSlug}/${datasetSlug}/${recordUid}`
+/** Locale cache-key suffix. `::<locale>` keeps each locale a distinct entry;
+ *  the default locale has no suffix. `::` never collides with a slug. */
+function localeKeySuffix(locale?: string): string {
+  return locale ? `::${locale}` : ''
+}
+
+function recordsKey(nodeSlug: string, datasetSlug: string, locale?: string): string {
+  return `records:${nodeSlug}/${datasetSlug}${localeKeySuffix(locale)}`
+}
+
+function recordKey(nodeSlug: string, datasetSlug: string, recordUid: string, locale?: string): string {
+  return `record:${nodeSlug}/${datasetSlug}/${recordUid}${localeKeySuffix(locale)}`
 }

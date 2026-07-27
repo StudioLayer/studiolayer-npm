@@ -11,6 +11,7 @@ export type {
   FieldKind,
   FieldType,
   ContentRecord,
+  ContentLocale,
   QueryResult,
   QueryShape,
 } from './types'

@@ -82,6 +82,58 @@ for (const node of await studio.nodes()) {
 }
 ```
 
+## Localisation
+
+If the project has multiple languages, request one on reads. Untranslated fields
+fall back to the project's default (source) language automatically, so a
+partly-translated site never shows blanks.
+
+```ts
+// List the languages the project offers (default first).
+const locales = await studio.locales()
+// [{ code: 'nl-BE', label: 'Dutch (Belgium)', isDefault: true, isFallback: false },
+//  { code: 'en-US', label: 'English (US)', isDefault: false, isFallback: true }]
+
+// A client-wide default locale for every read:
+const en = createClient({ apiKey: 'slk_...', locale: 'en-US' })
+const posts = await en.dataset('blog', 'posts').list()
+
+// ...or per call, overriding the client locale:
+const fr = await studio.listRecords('blog', 'posts', { locale: 'fr-BE' })
+const one = await studio.getRecord('blog', 'posts', 'R12AB34C', { locale: 'nl-BE' })
+```
+
+Each locale is cached separately, so switching languages never serves the wrong
+one. Pass `locale: ''` on a call to force the project default even when a
+client-level `locale` is set.
+
+### How a requested locale resolves
+
+You can pass the visitor's **detected** locale verbatim (e.g. from
+`Accept-Language`); the studio resolves it server-side, so you never have to map
+it to a configured code yourself:
+
+1. **Exact match** first (`nl-BE` -> `nl-BE`).
+2. **Base-language match**: `nl` and `nl-NL` resolve to a configured `nl-BE`;
+   `en`, `en-GB`, `en-AU` resolve to `en-US`. So the project only needs one
+   regional variant per language.
+3. **No match** (a language the project doesn't offer, e.g. a German visitor):
+   the project's **fallback** locale is served if one is set (the entry with
+   `isFallback: true`), otherwise the default. This lets a Dutch-authored site
+   (default `nl-BE`) show English to unknown languages while Dutch visitors still
+   get the source.
+4. **No locale sent** (you omit it): the default/source language.
+
+Within the chosen language, any field that isn't translated yet falls back to
+the default language for that field, never a blank.
+
+```ts
+// Framework example: forward whatever the visitor asked for.
+const accept = request.headers.get('accept-language')?.split(',')[0] // e.g. 'de-DE'
+const posts = await studio.listRecords('blog', 'posts', { locale: accept })
+// German isn't offered -> the project's fallback (say en-US) comes back.
+```
+
 ## Saved queries
 
 Run a server-defined query (`queries.<slug>`) and get its result. The `shape`
