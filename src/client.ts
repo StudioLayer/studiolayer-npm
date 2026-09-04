@@ -1,28 +1,28 @@
 import { ContentCache, type CacheOptions } from './cache'
-import { StudioLayerError } from './errors'
+import { JustmadeError } from './errors'
 import type { ContentLocale, ContentRecord, ContentSchema, QueryResult, SchemaNode } from './types'
 import { VersionTracker } from './version'
 
 /**
- * Query parameter the StudioLayer studio appends when it loads your site in a
+ * Query parameter the Justmade Studio studio appends when it loads your site in a
  * surface preview. Its presence means "an editor is looking at this right now",
  * which is exactly when caching must get out of the way - see `forRequest`.
  */
 export const PREVIEW_PARAM = 'sl-preview'
 
-/** Hosted StudioLayer platform. Used when no `baseUrl` is provided. */
-export const DEFAULT_BASE_URL = 'https://app.studiolayer.io'
+/** Hosted Justmade Studio platform. Used when no `baseUrl` is provided. */
+export const DEFAULT_BASE_URL = 'https://studio.justmade.be'
 
-export interface StudioLayerClientOptions {
+export interface JustmadeClientOptions {
   /**
    * Project API key, `slk_...`. Mint one in the project's settings under
    * "API keys". Its reach is the union of its per-node read/write scopes.
    */
   apiKey: string
   /**
-   * Base URL of your StudioLayer server, without a trailing `/api/content`
+   * Base URL of your Justmade Studio server, without a trailing `/api/content`
    * (that path is appended automatically). Defaults to the hosted platform at
-   * `https://app.studiolayer.io`; override it for a self-hosted instance.
+   * `https://studio.justmade.be`; override it for a self-hosted instance.
    */
   baseUrl?: string
   /**
@@ -61,16 +61,16 @@ export interface ReadOptions {
 type Method = 'GET' | 'POST' | 'PATCH'
 
 /**
- * Typed client for the StudioLayer content API: read and write a project's node
+ * Typed client for the Justmade Studio content API: read and write a project's node
  * datasets from any website or app. Reads are cached (see the `cache` option);
  * writes invalidate the affected cache entries automatically.
  *
  * ```ts
- * const studio = new StudioLayerClient({ apiKey: 'slk_...', baseUrl: 'https://studio.example.com' })
+ * const studio = new JustmadeClient({ apiKey: 'slk_...', baseUrl: 'https://studio.example.com' })
  * const posts = await studio.dataset<Post>('blog', 'posts').list()
  * ```
  */
-export class StudioLayerClient {
+export class JustmadeClient {
   private readonly apiKey: string
   private readonly baseUrl: string
   private readonly fetchImpl: typeof fetch
@@ -83,14 +83,14 @@ export class StudioLayerClient {
   /** Client-level default locale for reads (undefined = project default). */
   private readonly locale?: string
 
-  constructor(options: StudioLayerClientOptions) {
-    if (!options.apiKey) throw new Error('StudioLayerClient: `apiKey` is required')
+  constructor(options: JustmadeClientOptions) {
+    if (!options.apiKey) throw new Error('JustmadeClient: `apiKey` is required')
 
     this.apiKey = options.apiKey
     this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '')
     const resolvedFetch = options.fetch ?? globalThis.fetch
     if (!resolvedFetch) {
-      throw new Error('StudioLayerClient: no `fetch` available; pass one via options.fetch (Node < 18)')
+      throw new Error('JustmadeClient: no `fetch` available; pass one via options.fetch (Node < 18)')
     }
     this.fetchImpl = resolvedFetch.bind(globalThis)
     this.headers = options.headers ?? {}
@@ -117,7 +117,7 @@ export class StudioLayerClient {
 
   /**
    * A per-request view of this client that skips the cache when the request
-   * comes from a StudioLayer surface preview, and behaves exactly like this
+   * comes from a Justmade Studio surface preview, and behaves exactly like this
    * client otherwise. Reads still refresh the shared cache, so an editor
    * refreshing the preview also warms what real visitors get.
    *
@@ -136,11 +136,11 @@ export class StudioLayerClient {
    * `cache: 'no-store'` when the preview marker is present) or the editor keeps
    * seeing a stale page no matter what this client returns.
    */
-  forRequest(input: PreviewInput): StudioLayerClient {
+  forRequest(input: PreviewInput): JustmadeClient {
     if (!this.readDefault) return this // already a preview client
     if (!isPreviewRequest(input)) return this
 
-    const clone = new StudioLayerClient({
+    const clone = new JustmadeClient({
       apiKey: this.apiKey,
       baseUrl: this.baseUrl,
       fetch: this.fetchImpl,
@@ -360,7 +360,7 @@ export class StudioLayerClient {
       catch (err) {
         // Definitive answer (deleted/forbidden): drop the entry and surface it.
         // Transient (studio down, 5xx, network): serve the last good value.
-        if (err instanceof StudioLayerError && err.status < 500) {
+        if (err instanceof JustmadeError && err.status < 500) {
           this.cache.delete(cacheKey)
           throw err
         }
@@ -414,8 +414,8 @@ export class StudioLayerClient {
     return res.json() as Promise<T>
   }
 
-  /** Parse a non-2xx response into a `StudioLayerError`, preferring its message. */
-  private async toError(res: Response): Promise<StudioLayerError> {
+  /** Parse a non-2xx response into a `JustmadeError`, preferring its message. */
+  private async toError(res: Response): Promise<JustmadeError> {
     let message = res.statusText || `Request failed with status ${res.status}`
     let parsed: unknown
     try {
@@ -426,14 +426,14 @@ export class StudioLayerClient {
     } catch {
       /* non-JSON error body; keep the status text */
     }
-    return new StudioLayerError(message, res.status, parsed)
+    return new JustmadeError(message, res.status, parsed)
   }
 }
 
 /** Fluent, dataset-scoped view returned by `client.dataset()`. */
 export class DatasetHandle<T = Record<string, unknown>> {
   constructor(
-    private readonly client: StudioLayerClient,
+    private readonly client: JustmadeClient,
     private readonly nodeSlug: string,
     private readonly datasetSlug: string,
   ) {}
@@ -473,7 +473,7 @@ export type PreviewInput
     | undefined
 
 /**
- * True when the request was opened from a StudioLayer surface preview, i.e. it
+ * True when the request was opened from a Justmade Studio surface preview, i.e. it
  * carries the `sl-preview` query parameter the studio appends to the iframe URL.
  */
 export function isPreviewRequest(input: PreviewInput): boolean {

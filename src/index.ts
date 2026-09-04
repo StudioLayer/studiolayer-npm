@@ -1,6 +1,6 @@
-export { StudioLayerClient, DatasetHandle, DEFAULT_BASE_URL, PREVIEW_PARAM, isPreviewRequest } from './client'
-export type { StudioLayerClientOptions, ReadOptions, PreviewInput } from './client'
-export { StudioLayerError } from './errors'
+export { JustmadeClient, DatasetHandle, DEFAULT_BASE_URL, PREVIEW_PARAM, isPreviewRequest } from './client'
+export type { JustmadeClientOptions, ReadOptions, PreviewInput } from './client'
+export { JustmadeError } from './errors'
 export { ContentCache, MemoryCacheStore } from './cache'
 export type { CacheOptions, CacheStore, CacheEntry } from './cache'
 export type {
@@ -16,9 +16,9 @@ export type {
   QueryShape,
 } from './types'
 
-import { StudioLayerClient, type StudioLayerClientOptions } from './client'
+import { JustmadeClient, type JustmadeClientOptions } from './client'
 
 /** Convenience factory: `createClient({ apiKey, baseUrl })`. */
-export function createClient(options: StudioLayerClientOptions): StudioLayerClient {
-  return new StudioLayerClient(options)
+export function createClient(options: JustmadeClientOptions): JustmadeClient {
+  return new JustmadeClient(options)
 }

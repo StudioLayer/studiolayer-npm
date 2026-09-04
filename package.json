@@ -1,7 +1,7 @@
 {
-  "name": "@studiolayer/client",
+  "name": "@justmade/client",
   "version": "0.4.0",
-  "description": "Typed client for the StudioLayer content API. Read and write project node datasets from any website or app, headless-CMS style and beyond.",
+  "description": "Typed client for the Justmade Studio content API. Read and write project node datasets from any website or app, headless-CMS style and beyond.",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -29,7 +29,7 @@
     "prepublishOnly": "npm run build"
   },
   "keywords": [
-    "studiolayer",
+    "justmade",
     "headless-cms",
     "content-api",
     "cms",
@@ -37,16 +37,16 @@
     "client",
     "sdk"
   ],
-  "author": "StudioLayer",
+  "author": "Justmade Studio",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/StudioLayer/studiolayer-npm.git"
+    "url": "git+https://github.com/Justmade/justmade-studio-npm.git"
   },
   "bugs": {
-    "url": "https://github.com/StudioLayer/studiolayer-npm/issues"
+    "url": "https://github.com/Justmade/justmade-studio-npm/issues"
   },
-  "homepage": "https://github.com/StudioLayer/studiolayer-npm#readme",
+  "homepage": "https://github.com/Justmade/justmade-studio-npm#readme",
   "engines": {
     "node": ">=18"
   },

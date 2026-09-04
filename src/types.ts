@@ -1,5 +1,5 @@
 /**
- * Wire types for the StudioLayer content API. These mirror the server DTOs
+ * Wire types for the Justmade Studio content API. These mirror the server DTOs
  * (`server/utils/content/*`, `server/api/content/*`) one-to-one. Slugs are used
  * on the wire; internal database ids never leak.
  */

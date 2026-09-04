@@ -3,18 +3,18 @@
  * the HTTP status code so callers can branch (401 bad key, 403 out of scope,
  * 404 missing node/dataset/record, 422 query failed).
  */
-export class StudioLayerError extends Error {
+export class JustmadeError extends Error {
   readonly status: number
   /** The raw parsed response body, when the server returned one. */
   readonly body: unknown
 
   constructor(message: string, status: number, body?: unknown) {
     super(message)
-    this.name = 'StudioLayerError'
+    this.name = 'JustmadeError'
     this.status = status
     this.body = body
     // Restore prototype chain for `instanceof` when transpiled to ES5.
-    Object.setPrototypeOf(this, StudioLayerError.prototype)
+    Object.setPrototypeOf(this, JustmadeError.prototype)
   }
 
   get isUnauthorized(): boolean {

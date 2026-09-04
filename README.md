@@ -1,6 +1,6 @@
-# @studiolayer/client
+# @justmade/client
 
-Typed client for the StudioLayer **content API**. Read and write a project's
+Typed client for the Justmade Studio **content API**. Read and write a project's
 node datasets from any website or app: headless-CMS style, and beyond.
 
 Your site talks to project **nodes** over a small, key-authenticated REST
@@ -15,17 +15,17 @@ a fully typed client with built-in read caching.
 ## Install
 
 ```bash
-npm install @studiolayer/client
+npm install @justmade/client
 ```
 
 ## Quick start
 
 ```ts
-import { createClient } from '@studiolayer/client'
+import { createClient } from '@justmade/client'
 
 const studio = createClient({
-  apiKey: process.env.STUDIOLAYER_API_KEY!, // slk_...
-  // baseUrl defaults to https://app.studiolayer.io;
+  apiKey: process.env.JUSTMADE_STUDIO_API_KEY!, // slk_...
+  // baseUrl defaults to https://studio.justmade.be;
   // set it only for a self-hosted server:
   // baseUrl: 'https://studio.example.com',
 })
@@ -53,16 +53,16 @@ field slug with references (files, referenced records) already inflated.
 
 Pass the project API key as `apiKey`. A key's reach is the union of its per-node
 scopes (read and/or write, optionally narrowed to specific datasets). Calls
-outside the key's scope throw a `StudioLayerError` with `status` 403; an
+outside the key's scope throw a `JustmadeError` with `status` 403; an
 unknown node/dataset/record throws 404.
 
 ```ts
-import { StudioLayerError } from '@studiolayer/client'
+import { JustmadeError } from '@justmade/client'
 
 try {
   await studio.getRecord('blog', 'posts', 'nope')
 } catch (err) {
-  if (err instanceof StudioLayerError && err.isNotFound) {
+  if (err instanceof JustmadeError && err.isNotFound) {
     // handle missing record
   }
 }
@@ -233,7 +233,7 @@ behind a CDN or a framework data cache, that layer needs the same treatment or
 the editor still sees a stale page. In Next.js:
 
 ```ts
-import { isPreviewRequest } from '@studiolayer/client'
+import { isPreviewRequest } from '@justmade/client'
 
 export const dynamic = 'force-dynamic' // or, per fetch: cache: 'no-store'
 ```
