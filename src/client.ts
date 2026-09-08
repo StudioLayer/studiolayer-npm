@@ -4,7 +4,7 @@ import type { ContentLocale, ContentRecord, ContentSchema, QueryResult, SchemaNo
 import { VersionTracker } from './version'
 
 /**
- * Query parameter the Justmade Studio studio appends when it loads your site in a
+ * Query parameter Justmade Studio appends when it loads your site in a
  * surface preview. Its presence means "an editor is looking at this right now",
  * which is exactly when caching must get out of the way - see `forRequest`.
  */
